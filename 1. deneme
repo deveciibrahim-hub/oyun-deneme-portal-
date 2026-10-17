@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portal Hook: Cyberpunk Endless</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #090a0f;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #gameContainer {
+            position: relative;
+            box-shadow: 0 0 30px rgba(0, 243, 255, 0.2);
+        }
+        canvas {
+            background: #0d0f17;
+            display: block;
+            border: 2px solid #00f3ff;
+        }
+        #ui {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #00f3ff;
+            text-shadow: 0 0 8px #00f3ff;
+            pointer-events: none;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.7);
+            background: rgba(0,0,0,0.6);
+            padding: 8px 15px;
+            border-radius: 20px;
+            pointer-events: none;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <div id="ui">SKOR: <span id="score">0</span></div>
+    <div id="instructions"> Sol Tık: Kanca At/Bırak | Sağ Tık: Portal Aç (Turuncu/Mavi)</div>
+    <canvas id="canvas" width="450" height="700"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+
+// Oyun Durumu
+let score = 0;
+let cameraY = 0;
+let gameOver = false;
+
+// Fizik Kriterleri
+const gravity = 0.25;
+const friction = 0.99;
+
+// Karakter (Player)
+const player = {
+    x: 225,
+    y: 500,
+    vx: 0,
+    vy: 0,
+    radius: 12,
+    color: '#00f3ff'
+};
+
+// Kanca (Hook)
+const hook = {
+    active: false,
+    x: 0,
+    y: 0,
+    length: 0
+};
+
+// Portallar
+let portals = []; // Max 2 portal: [0] = Orange (Giriş), [1] = Blue (Çıkış)
+let portalTypeToggle = 0;
+
+// Binalar / Engeller
+let buildings = [];
+function generateBuilding(yPos) {
+    const isLeft = Math.random() > 0.5;
+    const width = 80 + Math.random() * 60;
+    const height = 150 + Math.random() * 100;
+    const x = isLeft ? 0 : canvas.width - width;
+    return { x, y: yPos, w: width, h: height };
+}
+
+// Başlangıç Binaları
+for (let i = 0; i < 8; i++) {
+    buildings.push(generateBuilding(600 - i * 180));
+}
+
+// Inputlar
+canvas.addEventListener('mousedown', (e) => {
+    if (gameOver) { resetGame(); return; }
+    
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top + cameraY;
+
+    if (e.button === 0) { // Sol Tık - Kanca
+        hook.active = true;
+        hook.x = mouseX;
+        hook.y = mouseY;
+        const dx = player.x - hook.x;
+        const dy = player.y - hook.y;
+        hook.length = Math.sqrt(dx * dx + dy * dy);
+    } else if (e.button === 2) { // Sağ Tık - Portal Aç
+        const color = portalTypeToggle === 0 ? '#ffaa00' : '#00aaff';
+        if (portals.length >= 2) portals.shift();
+        portals.push({ x: mouseX, y: mouseY, radius: 22, color, type: portalTypeToggle });
+        portalTypeToggle = 1 - portalTypeToggle;
+    }
+});
+
+canvas.addEventListener('mouseup', (e) => {
+    if (e.button === 0) hook.active = false;
+});
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+function resetGame() {
+    player.x = 225;
+    player.y = 500;
+    player.vx = 0;
+    player.vy = 0;
+    cameraY = 0;
+    score = 0;
+    portals = [];
+    hook.active = false;
+    gameOver = false;
+}
+
+// Güncelleme Döngüsü
+function update() {
+    if (gameOver) return;
+
+    // Yerçekimi ve Sürtünme
+    player.vy += gravity;
+    player.vx *= friction;
+    player.vy *= friction;
+
+    // Kanca Fiziği (Sarkaç)
+    if (hook.active) {
+        const dx = player.x - hook.x;
+        const dy = player.y - hook.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > hook.length) {
+            const angle = Math.atan2(dy, dx);
+            player.x = hook.x + Math.cos(angle) * hook.length;
+            player.y = hook.y + Math.sin(angle) * hook.length;
+            
+            // Gerginlik kuvveti ekle
+            player.vx -= Math.cos(angle) * 0.5;
+            player.vy -= Math.sin(angle) * 0.5;
+        }
+    }
+
+    // Pozisyon Güncelleme
+    player.x += player.vx;
+    player.y += player.vy;
+
+    // Portal Işınlanma Kontrolü
+    if (portals.length === 2) {
+        const p1 = portals[0];
+        const p2 = portals[1];
+        const d1 = Math.hypot(player.x - p1.x, player.y - p1.y);
+
+        if (d1 < player.radius + p1.radius) {
+            // Turuncu Portaldan Maviye Işınlan ve Fırla
+            player.x = p2.x;
+            player.y = p2.y - 30;
+            player.vy = -12; // Yukarı doğru fırlama kuvveti
+            player.vx *= 1.5;
+        }
+    }
+
+    // Kamera Takibi
+    if (player.y < cameraY + 300) {
+        cameraY = player.y - 300;
+    }
+
+    // Skor (En yüksek noktaya göre)
+    const currentScore = Math.floor((500 - player.y) / 10);
+    if (currentScore > score) score = currentScore;
+    scoreEl.innerText = score;
+
+    // Sonsuz Harita Üretimi
+    const topBuilding = buildings[buildings.length - 1];
+    if (topBuilding.y > cameraY - 200) {
+        buildings.push(generateBuilding(topBuilding.y - 180));
+    }
+
+    // Düşme / Yanma Kontrolü
+    if (player.y > cameraY + canvas.height + 50) {
+        gameOver = true;
+    }
+}
+
+// Çizim Döngüsü
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(0, -cameraY);
+
+    // Arka Plan Neon Izgara
+    ctx.strokeStyle = 'rgba(0, 243, 255, 0.05)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < canvas.width; x += 30) {
+        ctx.beginPath(); ctx.moveTo(x, cameraY); ctx.lineTo(x, cameraY + canvas.height); ctx.stroke();
+    }
+
+    // Binalar
+    ctx.fillStyle = '#121624';
+    ctx.strokeStyle = '#ff0055';
+    ctx.lineWidth = 2;
+    buildings.forEach(b => {
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+    });
+
+    // Portallar
+    portals.forEach(p => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 15;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+    });
+
+    // Kanca İpi
+    if (hook.active) {
+        ctx.beginPath();
+        ctx.moveTo(player.x, player.y);
+        ctx.lineTo(hook.x, hook.y);
+        ctx.strokeStyle = '#00f3ff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    // Oyuncu (Karakter)
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+    ctx.fillStyle = player.color;
+    ctx.shadowColor = player.color;
+    ctx.shadowBlur = 12;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+
+    // Game Over Ekranı
+    if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ff0055';
+        ctx.font = '24px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('OYUN BİTTİ!', canvas.width / 2, canvas.height / 2 - 20);
+        ctx.fillStyle = '#fff';
+        ctx.font = '16px Arial';
+        ctx.fillText('Yeniden başlamak için tıkla', canvas.width / 2, canvas.height / 2 + 20);
+    }
+
+    requestAnimationFrame(() => {
+        update();
+        draw();
+    });
+}
+
+draw();
+</script>
+</body>
+</html>
