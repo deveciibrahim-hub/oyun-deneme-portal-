@@ -2,15 +2,21 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portal Hook: Cyberpunk Endless</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Shadow Dash: Dark Knight</title>
     <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
         body {
             margin: 0;
             padding: 0;
-            background: #090a0f;
-            color: #fff;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a0d;
+            color: #d4af37;
+            font-family: 'Georgia', serif;
             overflow: hidden;
             display: flex;
             justify-content: center;
@@ -19,271 +25,409 @@
         }
         #gameContainer {
             position: relative;
-            box-shadow: 0 0 30px rgba(0, 243, 255, 0.2);
+            width: 100vw;
+            height: 100vh;
+            max-width: 480px;
+            max-height: 854px;
+            box-shadow: 0 0 35px rgba(212, 175, 55, 0.2);
+            overflow: hidden;
+            background: #111218;
         }
         canvas {
-            background: #0d0f17;
+            width: 100%;
+            height: 100%;
             display: block;
-            border: 2px solid #00f3ff;
         }
         #ui {
             position: absolute;
-            top: 15px;
-            left: 15px;
-            font-size: 18px;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             font-weight: bold;
-            color: #00f3ff;
-            text-shadow: 0 0 8px #00f3ff;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .hud-item {
+            background: rgba(17, 18, 24, 0.85);
+            border: 1px solid #d4af37;
+            padding: 8px 14px;
+            border-radius: 6px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+            font-size: 15px;
+            color: #e6ca65;
+            letter-spacing: 1px;
+        }
+        #comboText {
+            position: absolute;
+            top: 75px;
+            width: 100%;
+            text-align: center;
+            font-size: 22px;
+            font-weight: bold;
+            color: #ff3333;
+            text-shadow: 0 0 12px #ff0000;
+            opacity: 0;
+            transition: opacity 0.2s, transform 0.2s;
             pointer-events: none;
         }
-        #instructions {
+        #controlsHint {
             position: absolute;
-            bottom: 15px;
+            bottom: 25px;
             left: 50%;
             transform: translateX(-50%);
             font-size: 13px;
-            color: rgba(255, 255, 255, 0.7);
-            background: rgba(0,0,0,0.6);
-            padding: 8px 15px;
+            color: rgba(212, 175, 55, 0.8);
+            background: rgba(10, 10, 13, 0.85);
+            padding: 8px 18px;
             border-radius: 20px;
+            border: 1px solid rgba(212, 175, 55, 0.3);
             pointer-events: none;
             text-align: center;
+            white-space: nowrap;
         }
     </style>
 </head>
 <body>
 
 <div id="gameContainer">
-    <div id="ui">SKOR: <span id="score">0</span></div>
-    <div id="instructions"> Sol Tık: Kanca At/Bırak | Sağ Tık: Portal Aç (Turuncu/Mavi)</div>
-    <canvas id="canvas" width="450" height="700"></canvas>
+    <div id="ui">
+        <div class="hud-item">SKOR: <span id="score">0</span></div>
+        <div class="hud-item" style="border-color: #ff3333; color: #ff6666;">DALGA: <span id="wave">1</span></div>
+    </div>
+    <div id="comboText">COMBO x2!</div>
+    <div id="controlsHint">Düşmana Doğru Parmağını Kaydır (Swipe)!</div>
+    <canvas id="canvas"></canvas>
 </div>
 
 <script>
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
+const waveEl = document.getElementById('wave');
+const comboEl = document.getElementById('comboText');
+
+function resizeCanvas() {
+    canvas.width = canvas.parentElement.clientWidth;
+    canvas.height = canvas.parentElement.clientHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
 
 // Oyun Durumu
 let score = 0;
-let cameraY = 0;
+let wave = 1;
+let combo = 0;
 let gameOver = false;
 
-// Fizik Kriterleri
-const gravity = 0.25;
-const friction = 0.99;
-
-// Karakter (Player)
+// Karakter (Şövalye)
 const player = {
-    x: 225,
-    y: 500,
-    vx: 0,
-    vy: 0,
-    radius: 12,
-    color: '#00f3ff'
-};
-
-// Kanca (Hook)
-const hook = {
-    active: false,
     x: 0,
     y: 0,
-    length: 0
+    targetX: 0,
+    targetY: 0,
+    radius: 16,
+    color: '#d4af37',
+    slashes: [] // Kılıç izleri
 };
 
-// Portallar
-let portals = []; // Max 2 portal: [0] = Orange (Giriş), [1] = Blue (Çıkış)
-let portalTypeToggle = 0;
+// Düşmanlar ve Efektler
+let enemies = [];
+let particles = [];
+let spawnTimer = 0;
+let spawnInterval = 90; // Frame bazlı üretme hızı
 
-// Binalar / Engeller
-let buildings = [];
-function generateBuilding(yPos) {
-    const isLeft = Math.random() > 0.5;
-    const width = 80 + Math.random() * 60;
-    const height = 150 + Math.random() * 100;
-    const x = isLeft ? 0 : canvas.width - width;
-    return { x, y: yPos, w: width, h: height };
-}
-
-// Başlangıç Binaları
-for (let i = 0; i < 8; i++) {
-    buildings.push(generateBuilding(600 - i * 180));
-}
-
-// Inputlar
-canvas.addEventListener('mousedown', (e) => {
-    if (gameOver) { resetGame(); return; }
+function init() {
+    score = 0;
+    wave = 1;
+    combo = 0;
+    gameOver = false;
+    spawnInterval = 90;
     
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top + cameraY;
+    player.x = canvas.width / 2;
+    player.y = canvas.height / 2;
+    player.targetX = player.x;
+    player.targetY = player.y;
+    player.slashes = [];
+    
+    enemies = [];
+    particles = [];
 
-    if (e.button === 0) { // Sol Tık - Kanca
-        hook.active = true;
-        hook.x = mouseX;
-        hook.y = mouseY;
-        const dx = player.x - hook.x;
-        const dy = player.y - hook.y;
-        hook.length = Math.sqrt(dx * dx + dy * dy);
-    } else if (e.button === 2) { // Sağ Tık - Portal Aç
-        const color = portalTypeToggle === 0 ? '#ffaa00' : '#00aaff';
-        if (portals.length >= 2) portals.shift();
-        portals.push({ x: mouseX, y: mouseY, radius: 22, color, type: portalTypeToggle });
-        portalTypeToggle = 1 - portalTypeToggle;
+    scoreEl.innerText = score;
+    waveEl.innerText = wave;
+}
+
+// Düşman Üretimi
+function spawnEnemy() {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.max(canvas.width, canvas.height) / 2 + 40;
+    const x = player.x + Math.cos(angle) * distance;
+    const y = player.y + Math.sin(angle) * distance;
+
+    const typeRand = Math.random();
+    let type = 'skeleton'; // Hızlı, 1 can
+    let hp = 1;
+    let speed = 1.2 + wave * 0.15;
+    let color = '#e0e0e0';
+    let radius = 12;
+
+    if (typeRand > 0.65) { // Şövalye: Yavaş, 2 can
+        type = 'knight';
+        hp = 2;
+        speed = 0.7 + wave * 0.1;
+        color = '#8899a6';
+        radius = 16;
+    }
+
+    enemies.push({ x, y, hp, maxHp: hp, speed, color, radius, type });
+}
+
+// Swipe (Kaydırma) Algılama
+let touchStartX = 0;
+let touchStartY = 0;
+
+function handleSwipe(dx, dy) {
+    if (gameOver) { init(); return; }
+
+    const swipeDist = Math.hypot(dx, dy);
+    if (swipeDist < 20) return; // Çok küçük hareketleri yok say
+
+    const dirX = dx / swipeDist;
+    const dirY = dy / swipeDist;
+
+    // En yakın ve o yöndeki düşmanı bul
+    let targetEnemy = null;
+    let minDist = Infinity;
+
+    enemies.forEach(e => {
+        const toEnemyX = e.x - player.x;
+        const toEnemyY = e.y - player.y;
+        const dist = Math.hypot(toEnemyX, toEnemyY);
+
+        // Vektör Çarpımı (Açı kontrolü)
+        const dot = (toEnemyX / dist) * dirX + (toEnemyY / dist) * dirY;
+
+        if (dot > 0.5 && dist < minDist) { // Yaklaşık olarak doğru yönde
+            minDist = dist;
+            targetEnemy = e;
+        }
+    });
+
+    if (targetEnemy) {
+        // Düşmana Doğru Işınlan / Atıl
+        const startX = player.x;
+        const startY = player.y;
+
+        player.x = targetEnemy.x;
+        player.y = targetEnemy.y;
+
+        // Kılıç İzi Efekti Ekle
+        player.slashes.push({
+            x1: startX, y1: startY,
+            x2: player.x, y2: player.y,
+            alpha: 1.0
+        });
+
+        // Düşmana Hasar Ver
+        targetEnemy.hp -= 1;
+
+        // Efekt Parçacıkları (Kan/Kıvılcım)
+        for (let i = 0; i < 8; i++) {
+            particles.push({
+                x: targetEnemy.x,
+                y: targetEnemy.y,
+                vx: (Math.random() - 0.5) * 6,
+                vy: (Math.random() - 0.5) * 6,
+                color: targetEnemy.hp > 0 ? '#d4af37' : '#ff3333',
+                life: 1.0
+            });
+        }
+
+        if (targetEnemy.hp <= 0) {
+            enemies = enemies.filter(e => e !== targetEnemy);
+            score += 10;
+            combo += 1;
+            showCombo();
+        } else {
+            // Şövalyenin zırhı kırıldı, geriye fırlat
+            targetEnemy.x += dirX * 30;
+            targetEnemy.y += dirY * 30;
+        }
+
+        scoreEl.innerText = score;
+
+        // Dalga İlerlemesi
+        if (score % 100 === 0 && score > 0) {
+            wave += 1;
+            waveEl.innerText = wave;
+            if (spawnInterval > 30) spawnInterval -= 10;
+        }
+    } else {
+        // Boşa Sallama - Combo Sıfırla
+        combo = 0;
+    }
+}
+
+function showCombo() {
+    if (combo > 1) {
+        comboEl.innerText = `COMBO x${combo}!`;
+        comboEl.style.opacity = 1;
+        comboEl.style.transform = 'scale(1.2)';
+        setTimeout(() => {
+            comboEl.style.opacity = 0;
+            comboEl.style.transform = 'scale(1.0)';
+        }, 500);
+    }
+}
+
+// Dokunmatik ve Fare Etkinlikleri
+canvas.addEventListener('touchstart', e => {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+}, { passive: true });
+
+canvas.addEventListener('touchend', e => {
+    const touchEndX = e.changedTouches[0].clientX;
+    const touchEndY = e.changedTouches[0].clientY;
+    handleSwipe(touchEndX - touchStartX, touchEndY - touchStartY);
+}, { passive: true });
+
+let isMouseDown = false;
+canvas.addEventListener('mousedown', e => {
+    touchStartX = e.clientX;
+    touchStartY = e.clientY;
+    isMouseDown = true;
+});
+
+canvas.addEventListener('mouseup', e => {
+    if (isMouseDown) {
+        handleSwipe(e.clientX - touchStartX, e.clientY - touchStartY);
+        isMouseDown = false;
     }
 });
 
-canvas.addEventListener('mouseup', (e) => {
-    if (e.button === 0) hook.active = false;
-});
-
-canvas.addEventListener('contextmenu', e => e.preventDefault());
-
-function resetGame() {
-    player.x = 225;
-    player.y = 500;
-    player.vx = 0;
-    player.vy = 0;
-    cameraY = 0;
-    score = 0;
-    portals = [];
-    hook.active = false;
-    gameOver = false;
-}
-
-// Güncelleme Döngüsü
+// Oyun Güncelleme
 function update() {
     if (gameOver) return;
 
-    // Yerçekimi ve Sürtünme
-    player.vy += gravity;
-    player.vx *= friction;
-    player.vy *= friction;
+    // Düşman Üretimi
+    spawnTimer++;
+    if (spawnTimer >= spawnInterval) {
+        spawnEnemy();
+        spawnTimer = 0;
+    }
 
-    // Kanca Fiziği (Sarkaç)
-    if (hook.active) {
-        const dx = player.x - hook.x;
-        const dy = player.y - hook.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+    // Düşman Hareketi (Player'a Doğru)
+    enemies.forEach(e => {
+        const dx = player.x - e.x;
+        const dy = player.y - e.y;
+        const dist = Math.hypot(dx, dy);
 
-        if (dist > hook.length) {
-            const angle = Math.atan2(dy, dx);
-            player.x = hook.x + Math.cos(angle) * hook.length;
-            player.y = hook.y + Math.sin(angle) * hook.length;
-            
-            // Gerginlik kuvveti ekle
-            player.vx -= Math.cos(angle) * 0.5;
-            player.vy -= Math.sin(angle) * 0.5;
+        e.x += (dx / dist) * e.speed;
+        e.y += (dy / dist) * e.speed;
+
+        // Çarpışma / Ölüm Kontrolü
+        if (dist < player.radius + e.radius - 4) {
+            gameOver = true;
         }
-    }
+    });
 
-    // Pozisyon Güncelleme
-    player.x += player.vx;
-    player.y += player.vy;
+    // Parçacık Fiziği
+    particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 0.04;
+    });
+    particles = particles.filter(p => p.life > 0);
 
-    // Portal Işınlanma Kontrolü
-    if (portals.length === 2) {
-        const p1 = portals[0];
-        const p2 = portals[1];
-        const d1 = Math.hypot(player.x - p1.x, player.y - p1.y);
-
-        if (d1 < player.radius + p1.radius) {
-            // Turuncu Portaldan Maviye Işınlan ve Fırla
-            player.x = p2.x;
-            player.y = p2.y - 30;
-            player.vy = -12; // Yukarı doğru fırlama kuvveti
-            player.vx *= 1.5;
-        }
-    }
-
-    // Kamera Takibi
-    if (player.y < cameraY + 300) {
-        cameraY = player.y - 300;
-    }
-
-    // Skor (En yüksek noktaya göre)
-    const currentScore = Math.floor((500 - player.y) / 10);
-    if (currentScore > score) score = currentScore;
-    scoreEl.innerText = score;
-
-    // Sonsuz Harita Üretimi
-    const topBuilding = buildings[buildings.length - 1];
-    if (topBuilding.y > cameraY - 200) {
-        buildings.push(generateBuilding(topBuilding.y - 180));
-    }
-
-    // Düşme / Yanma Kontrolü
-    if (player.y > cameraY + canvas.height + 50) {
-        gameOver = true;
-    }
+    // Kılıç İzi Saydamlığı
+    player.slashes.forEach(s => s.alpha -= 0.08);
+    player.slashes = player.slashes.filter(s => s.alpha > 0);
 }
 
-// Çizim Döngüsü
+// Çizim Mantığı
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    ctx.save();
-    ctx.translate(0, -cameraY);
-
-    // Arka Plan Neon Izgara
-    ctx.strokeStyle = 'rgba(0, 243, 255, 0.05)';
+    // Zindan Taş Zemini
+    ctx.strokeStyle = '#181a24';
     ctx.lineWidth = 1;
-    for (let x = 0; x < canvas.width; x += 30) {
-        ctx.beginPath(); ctx.moveTo(x, cameraY); ctx.lineTo(x, cameraY + canvas.height); ctx.stroke();
+    for (let x = 0; x < canvas.width; x += 40) {
+        for (let y = 0; y < canvas.height; y += 40) {
+            ctx.strokeRect(x, y, 40, 40);
+        }
     }
 
-    // Binalar
-    ctx.fillStyle = '#121624';
-    ctx.strokeStyle = '#ff0055';
-    ctx.lineWidth = 2;
-    buildings.forEach(b => {
-        ctx.fillRect(b.x, b.y, b.w, b.h);
-        ctx.strokeRect(b.x, b.y, b.w, b.h);
-    });
-
-    // Portallar
-    portals.forEach(p => {
+    // Kılıç Atılım İzi (Slash Lines)
+    player.slashes.forEach(s => {
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.shadowColor = p.color;
-        ctx.shadowBlur = 15;
-        ctx.fill();
+        ctx.moveTo(s.x1, s.y1);
+        ctx.lineTo(s.x2, s.y2);
+        ctx.strokeStyle = `rgba(212, 175, 55, ${s.alpha})`;
+        ctx.lineWidth = 4;
+        ctx.shadowColor = '#d4af37';
+        ctx.shadowBlur = 10;
+        ctx.stroke();
         ctx.shadowBlur = 0;
     });
 
-    // Kanca İpi
-    if (hook.active) {
+    // Parçacıklar
+    particles.forEach(p => {
         ctx.beginPath();
-        ctx.moveTo(player.x, player.y);
-        ctx.lineTo(hook.x, hook.y);
-        ctx.strokeStyle = '#00f3ff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-    }
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.life;
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+    });
 
-    // Oyuncu (Karakter)
+    // Düşmanlar
+    enemies.forEach(e => {
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+        ctx.fillStyle = e.color;
+        ctx.shadowColor = e.color;
+        ctx.shadowBlur = e.type === 'knight' ? 12 : 6;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Zırh Göstergesi (Canı 2 olanlar için dış halka)
+        if (e.hp > 1) {
+            ctx.strokeStyle = '#ff3333';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    });
+
+    // Oyuncu (Karanlık Şövalye)
     ctx.beginPath();
     ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
     ctx.fillStyle = player.color;
     ctx.shadowColor = player.color;
-    ctx.shadowBlur = 12;
+    ctx.shadowBlur = 18;
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    ctx.restore();
-
     // Game Over Ekranı
     if (gameOver) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        ctx.fillStyle = 'rgba(10, 10, 13, 0.88)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#ff0055';
-        ctx.font = '24px Arial';
+
+        ctx.fillStyle = '#ff3333';
+        ctx.font = 'bold 28px Georgia';
         ctx.textAlign = 'center';
-        ctx.fillText('OYUN BİTTİ!', canvas.width / 2, canvas.height / 2 - 20);
+        ctx.fillText('ÖLDÜNÜZ!', canvas.width / 2, canvas.height / 2 - 30);
+
+        ctx.fillStyle = '#d4af37';
+        ctx.font = '16px Georgia';
+        ctx.fillText(`Toplam Skor: ${score}`, canvas.width / 2, canvas.height / 2 + 10);
+        ctx.fillText(`Ulaşılan Dalga: ${wave}`, canvas.width / 2, canvas.height / 2 + 35);
+
         ctx.fillStyle = '#fff';
-        ctx.font = '16px Arial';
-        ctx.fillText('Yeniden başlamak için tıkla', canvas.width / 2, canvas.height / 2 + 20);
+        ctx.font = '13px Georgia';
+        ctx.fillText('Yeniden Doğmak İçin Ekrana Dokun', canvas.width / 2, canvas.height / 2 + 85);
     }
 
     requestAnimationFrame(() => {
@@ -292,6 +436,7 @@ function draw() {
     });
 }
 
+init();
 draw();
 </script>
 </body>
